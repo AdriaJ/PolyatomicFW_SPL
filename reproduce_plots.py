@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 
+res, interpolated = pickle.load(open("results.p", "rb"))
+
 ###############################
 
 n_reps = 15
@@ -26,8 +28,6 @@ algos = ['FISTA', 'V-FW', 'FC-FW', 'P-FW']
 sampled_times = np.linspace(0, 4, 1000)
 
 ################################
-
-res, interpolated = pickle.load(open("results.p", "rb"))
 
 plt.style.use('ggplot')
 c = ['#E24A33', '#9dcc7a', '#988ED5', '#348ABD']
@@ -60,5 +60,5 @@ for factor in Ls:
             ax.set_xlabel('Time (s)', size=12)
         if i % 2 == 1:
             ax.set_ylabel('LASSO value', size=14)
-        plt.savefig('figures/fig'+str(i)+'.png', format='png', dpi=1000, bbox_inches='tight')
-        plt.close(fig)
+        #plt.savefig('figures/fig'+str(i)+'.png', format='png', dpi=1000, bbox_inches='tight')
+        #plt.close(fig)
