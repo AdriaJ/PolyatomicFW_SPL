@@ -8,10 +8,10 @@ import pycsou.linop as pl
 
 from pycsou.func.loss import SquaredL2Loss
 from pycsou.func.penalty import L1Norm
-from pycsou.opt.proxalgs import APGD
 
+from utils import TAPGD
 from frank_wolfe import VanillaFWSolverForLasso, FullyCorrectiveFWSolverForLasso, \
-    ThriftyPolytropicFWSolverForLasso
+    PolyatomicFWSolverForLasso
 
 ###############################
 
@@ -21,6 +21,7 @@ Ls = [16, 64]
 grid_size = 128
 r = .8  # sampling area (rate of the side length)
 psnr = 20
+t_max = 4.
 
 init_seed = None
 
@@ -35,7 +36,7 @@ remove = False
 
 algos = ['FISTA', 'V-FW', 'FC-FW', 'P-FW']
 res = {}
-sampled_times = np.linspace(0, 4, 1000)
+sampled_times = np.linspace(0, t_max, 1000)
 interpolated = {}
 ###############################
 
@@ -86,8 +87,8 @@ for n in n_sources:
             data_fidelity = l22_loss * forward
             regularization = lambda_ * L1Norm(dim=forward.shape[1])
 
-            apgd = APGD(dim=regularization.shape[1], F=data_fidelity, G=regularization, acceleration='CD', verbose=None,
-                        accuracy_threshold=eps, max_iter=5000)
+            apgd = TAPGD(dim=regularization.shape[1], F=data_fidelity, G=regularization, acceleration='CD', verbose=None,
+                        accuracy_threshold=eps, max_iter=5000, t_max=t_max)
 
             # FW
             vfw_solver = VanillaFWSolverForLasso(data=measurements,
@@ -98,7 +99,7 @@ for n in n_sources:
                                                  stopping_strategy=stopping,
                                                  accuracy_threshold=eps,
                                                  verbose=None,
-                                                 remember_iterand=False)
+                                                 remember_iterand=False, t_max=t_max)
 
             fcfw_solver = FullyCorrectiveFWSolverForLasso(data=measurements,
                                                           forwardOp=forward,
@@ -111,26 +112,28 @@ for n in n_sources:
                                                           reweighting_prec=final_reweighting_prec,
                                                           remove_positions=remove,
                                                           remember_iterand=False,
-                                                          reweighting='fista')
+                                                          reweighting='fista',
+                                                          t_max=t_max)
 
-            tpfw_solver = ThriftyPolytropicFWSolverForLasso(data=measurements,
-                                                            forwardOp=forward,
-                                                            lambda_factor=lambda_factor,
-                                                            min_iter=0,
-                                                            max_iter=5000,
-                                                            stopping_strategy=stopping,
-                                                            accuracy_threshold=eps,
-                                                            verbose=None,
-                                                            init_reweighting_prec=init_reweighting_prec,
-                                                            final_reweighting_prec=final_reweighting_prec,
-                                                            multi_spikes_threshold=multi_spike_threshold,
-                                                            remove_positions=remove,
-                                                            remember_iterand=False,
-                                                            decreasing=decreasing)
+            pfw_solver = PolyatomicFWSolverForLasso(data=measurements,
+                                                    forwardOp=forward,
+                                                    lambda_factor=lambda_factor,
+                                                    min_iter=0,
+                                                    max_iter=5000,
+                                                    stopping_strategy=stopping,
+                                                    accuracy_threshold=eps,
+                                                    verbose=None,
+                                                    init_reweighting_prec=init_reweighting_prec,
+                                                    final_reweighting_prec=final_reweighting_prec,
+                                                    multi_spikes_threshold=multi_spike_threshold,
+                                                    remove_positions=remove,
+                                                    remember_iterand=False,
+                                                    decreasing=decreasing,
+                                                    t_max=t_max)
 
             # Storage of the results
 
-            solvers = [apgd, vfw_solver, fcfw_solver, tpfw_solver]
+            solvers = [apgd, vfw_solver, fcfw_solver, pfw_solver]
             times = []
             results = []
             solutions = []
@@ -185,7 +188,6 @@ for factor in Ls:
                             alpha=.5, color=c[j])
 
         errors = [d['rrmse'] for d in res[n][factor]]
-        #ax.set_title('mean RRMSE: {:.4f}'.format(sum(errors) / len(errors)))
         ax.grid(True)
         ax.set_ylim([.31, 1.05])
         if i in [2, 5]:    #change
