@@ -25,8 +25,17 @@ It is recommended to install those extra dependencies in an Anaconda environment
 
 ### Run the code
 
-Once the dependencies installed and the environment activated, you can run reconstructions with PFW and compare them with the provided baselines (FISTA, Vanilla FW, Fully-Corrective FW). A testcase on a simulated sparse problem is showcased in the code ```example.py```.
+Once the dependencies installed and the environment activated, you can run reconstructions with PFW and compare them with the provided baselines (FISTA, Vanilla FW, Fully-Corrective FW). A testcase on a simulated sparse problem is showcased in the code ```example.py```. In particular, we encourage you to try this code and play with the different parameters, especially `n_sources` (the sparsity index K from the article) and `alpha`.
+```bash
+>> python example.py
+```
 
 In order to reproduce the plots of the paper, you should run the code ```plot_comparison_cs.py```. This code will create 6 subplots similar to the ones provided in the paper (warning: it can be relatively long to run).
+```bash
+>> python plot_comparison_cs.py
+```
 
-The exact results of the paper are stored in the Pickle file ```results.p``` and can be plotted using ```plot_saved_results.py```.
+The exact results of the paper are stored in the Pickle file ```results.p``` and can be plotted with
+```bash
+>> python plot_saved_results.py
+```
