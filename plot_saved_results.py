@@ -32,11 +32,12 @@ sampled_times = np.linspace(0, 4, 1000)
 plt.style.use('ggplot')
 c = ['#E24A33', '#9dcc7a', '#988ED5', '#348ABD']
 i = 0
+fig = plt.figure(figsize=(8, 12))
 for factor in Ls:
     for n in n_sources:
         i += 1
-        fig = plt.figure(figsize=(4, 4))
-        ax = fig.add_subplot(111)
+        #fig = plt.figure(figsize=(4, 4))
+        ax = fig.add_subplot(3,2,i)
         ax.grid(True)
         ax.set_ylim([.31, 1.05])
         for j, algo in enumerate(algos):
@@ -60,5 +61,6 @@ for factor in Ls:
             ax.set_xlabel('Time (s)', size=12)
         if i % 2 == 1:
             ax.set_ylabel('LASSO value', size=14)
+plt.show()
         #plt.savefig('figures/fig'+str(i)+'.png', format='png', dpi=1000, bbox_inches='tight')
         #plt.close(fig)
