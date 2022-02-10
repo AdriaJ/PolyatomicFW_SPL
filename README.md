@@ -29,6 +29,10 @@ Once the dependencies installed and the environment activated, you can run recon
 ```bash
 >> python example.py
 ```
+The following figure is an i example of what can be obtained with different parameters.
+<p align="center">
+  <img src="https://user-images.githubusercontent.com/43072455/153450106-e7460e33-c09a-461f-a588-900449501ae2.png" width="1000">
+</p>
 
 In order to reproduce the plots of the paper, you should run the code ```plot_comparison_cs.py```. This code will create 6 subplots similar to the ones provided in the paper (warning: it can be relatively long to run).
 ```bash
