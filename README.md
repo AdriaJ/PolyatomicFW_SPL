@@ -2,7 +2,7 @@
 
 This repository provides the code to run and reproduce the results for the IEEE Signal Processing Letters paper "A Fast and Scalable Polyatomic Frank-Wolfe Algorithm for the LASSO", from Adrian Jarret, Julien Fageot and Matthieu Simeoni.
 
-The implementation is based on the optimization package [Pycsou](https://github.com/matthieumeo/pycsou)
+The implementation is based on the optimization package [Pycsou](https://github.com/matthieumeo/pycsou).
 
 ## Installation
 
@@ -29,7 +29,7 @@ Once the dependencies installed and the environment activated, you can run recon
 ```bash
 >> python example.py
 ```
-The following figure is an i example of what can be obtained with different parameters.
+The following figure is an example of what can be obtained with different parameters.
 <p align="center">
   <img src="https://user-images.githubusercontent.com/43072455/153450106-e7460e33-c09a-461f-a588-900449501ae2.png" width="1000">
 </p>
