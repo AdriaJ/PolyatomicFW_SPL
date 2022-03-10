@@ -15,13 +15,13 @@ from frank_wolfe import VanillaFWSolverForLasso, FullyCorrectiveFWSolverForLasso
 
 ########################
 
-n_sources = 256
-alpha = 16
+n_sources = 128
+alpha = 256
 L = alpha * n_sources
 grid_size = 128
 r = .8  # sampling area (rate of the side length)
 psnr = 20
-t_max = 1.
+t_max = 10.
 
 seed = None # 8970, 2168
 
