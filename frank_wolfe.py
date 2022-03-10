@@ -18,10 +18,14 @@ class GenericFWSolverForLasso(TimedGenericIterativeAlgorithm):
     def __init__(self, data: np.ndarray, forwardOp: pcore.linop.LinearOperator, lambda_: Optional[float] = None,
                  lambda_factor: Optional[float] = 0.1, min_iter: int = 10, max_iter: int = 500,
                  stopping_strategy: str = 'certificate', accuracy_threshold: float = 1e-4, verbose: Optional[int] = 10,
-                 remove_positions: bool = False, remember_iterand: bool = False, decreasing: bool = False,
-                 multi_spikes_threshold: float = .7, multi_spikes: bool = True, reweighting: str = 'ista', t_max: float = None):
+                 remove_positions: bool = False, remember_iterand: bool = False,
+                 multi_spikes_threshold: float = .7, multi_spikes: bool = True, reweighting: str = 'ista',
+                 t_max: float = None, remember_iterations_reweighting: bool = False):
 
         self.data = data
+        self.complex_measurements = np.iscomplexobj(self.data)
+        if self.complex_measurements:
+            self.stacked_data = np.hstack([self.data.real, self.data.imag])
         self.forwardOp = forwardOp
         self.stopping_strategy = stopping_strategy
         self.accuracy_threshold = accuracy_threshold
@@ -30,7 +34,6 @@ class GenericFWSolverForLasso(TimedGenericIterativeAlgorithm):
         self.reweighting = reweighting
 
         self.remove_positions = remove_positions
-        self.decreasing = decreasing
 
         self.dim = self.forwardOp.shape[1]
         self.x0 = np.zeros(self.dim)
@@ -39,6 +42,9 @@ class GenericFWSolverForLasso(TimedGenericIterativeAlgorithm):
         self.epsilon = None
         self.remember_iterand = remember_iterand
         self.iterand_history = []
+        self.remember_iterations_reweighting = remember_iterations_reweighting
+        if self.remember_iterations_reweighting:
+            self.iterations_reweighting = []
         init_iterand = {'iterand': self.x0, 'positions': np.array([], dtype=int)}
 
         l22_loss = (1 / 2) * SquaredL2Loss(dim=self.forwardOp.shape[0], data=self.data)
@@ -90,12 +96,13 @@ class GenericFWSolverForLasso(TimedGenericIterativeAlgorithm):
                                               key=abs)
         else:
             self.new_ind = np.argmax(d)
+            # print("New index : {}".format(self.new_ind))
             self.dual_certificate_value = dual_certificate[self.new_ind]
-            if self.new_ind in self.old_iterand['positions']:
-                self.new_ind = None  # already present position
-        if abs(self.dual_certificate_value) < 1.:
-            if self.verbose is not None:
-                print('Warning, dual certificate lower than 1 at iteration {}'.format(self.iter))
+            # if self.new_ind in self.old_iterand['positions']:
+            #     self.new_ind = None  # already present position
+        # if abs(self.dual_certificate_value) < 1.:
+        #     if self.verbose is not None:
+        #         print('Warning, dual certificate lower than 1 at iteration {}'.format(self.iter))
 
     @abstractmethod
     def combine_new_impulse(self) -> Any:
@@ -151,17 +158,21 @@ class GenericFWSolverForLasso(TimedGenericIterativeAlgorithm):
         else:
             raise ValueError('Stopping strategy must be in ["relative_improvement", "certificate"]')
 
-    def restricted_support_lasso(self, active_indices: np.ndarray, accuracy: float, x0: np.ndarray = None, d: float = 75.):
+    def restricted_support_lasso(self, active_indices: np.ndarray, accuracy: float, x0: np.ndarray = None,
+                                 d: float = 75.):
         if x0 is None:
             x0 = np.zeros(active_indices.shape)
         injection = pl.sampling.SubSampling(self.dim, active_indices, dtype=float).get_adjointOp()
-        restricted_forward = pl.DenseLinearOperator(
-            self.forwardOp.mat[:, active_indices])
-        restricted_forward.compute_lipschitz_cst(tol=1e-3)
-        restricted_data_fidelity = (1 / 2) * SquaredL2Loss(dim=restricted_forward.shape[0], data=self.data) \
+        restricted_forward = self.forwardOp.get_restricted_operator(active_indices)
+        # restricted_forward.compute_lipschitz_cst(tol=1e-3)
+        # restricted_forward.lipschitz_cst = self.forwardOp.lipschitz_cst
+        # restricted_forward.diff_lipschitz_cst = self.forwardOp.diff_lipschitz_cst
+        if self.complex_measurements:
+            measurements = self.stacked_data
+        else:
+            measurements = self.data
+        restricted_data_fidelity = (1 / 2) * SquaredL2Loss(dim=restricted_forward.shape[0], data=measurements) \
                                    * restricted_forward
-        # restricted_data_fidelity.lipschitz_cst = self.data_fidelity.lipschitz_cst
-        # restricted_data_fidelity.diff_lipschitz_cst = self.data_fidelity.diff_lipschitz_cst
         restricted_regularization = self.lambda_ * L1Norm(dim=restricted_data_fidelity.shape[1])
         if self.reweighting == 'fista':
             acceleration = 'CD'
@@ -175,7 +186,10 @@ class GenericFWSolverForLasso(TimedGenericIterativeAlgorithm):
                       G=restricted_regularization, x0=x0, tau=tau,
                       acceleration=acceleration, verbose=None, accuracy_threshold=accuracy, d=d, max_iter=2000,
                       min_iter=1)
-        return injection(solver.iterate()[0]['iterand'])
+        res = injection(solver.iterate()[0]['iterand'])
+        if self.remember_iterations_reweighting:
+            self.iterations_reweighting.append(solver.iter)
+        return res
 
 
 class VanillaFWSolverForLasso(GenericFWSolverForLasso):
@@ -193,32 +207,78 @@ class VanillaFWSolverForLasso(GenericFWSolverForLasso):
                                                       min_iter=min_iter, max_iter=max_iter,
                                                       stopping_strategy=stopping_strategy,
                                                       accuracy_threshold=accuracy_threshold, verbose=verbose,
-                                                      remember_iterand=remember_iterand, multi_spikes=False, t_max=t_max)
+                                                      remember_iterand=remember_iterand, multi_spikes=False,
+                                                      t_max=t_max)
+        self.lift_variable = 0.
 
     def combine_new_impulse(self) -> Any:
         iterand = deepcopy(self.old_iterand['iterand'])
         if self.new_ind is not None:
             new_positions = np.hstack([self.old_iterand['positions'], self.new_ind])
+        else:
+            new_positions = self.old_iterand['positions']
+
+        if np.abs(self.dual_certificate_value) > 1. :
             if self.step_size == 'optimal':
+                coordinate = np.zeros(self.dim)
+                coordinate[self.new_ind] = 1.
+                # gamma = np.dot(self.data_fidelity.gradient(iterand), iterand) + self.lambda_ * (
+                #         1. * np.linalg.norm(iterand, 1) + (np.abs(self.dual_certificate_value) - 1.) * self.bound)
                 gamma = np.dot(self.data_fidelity.gradient(iterand), iterand) + self.lambda_ * (
-                    1. * np.linalg.norm(iterand, 1) + (np.abs(self.dual_certificate_value) - 1.) * self.bound)
-                gamma /= np.linalg.norm(self.forwardOp.mat[:, self.new_ind] * self.bound * np.sign(
+                        self.lift_variable + (np.abs(self.dual_certificate_value) - 1.) * self.bound)
+                gamma /= np.linalg.norm(self.forwardOp @ coordinate * self.bound * np.sign(
                     self.dual_certificate_value) - self.forwardOp @ iterand, 2) ** 2
             else:
-                gamma = 2/(self.iter + 3)
+                gamma = 2 / (self.iter + 3)
+        else:
+            if self.step_size == 'optimal': # todo the implementation can be done more efficiently
+                # gamma = np.dot(self.data_fidelity.gradient(iterand), iterand) +\
+                #         self.lambda_ * np.linalg.norm(iterand, 1)
+                gamma = np.dot(self.data_fidelity.gradient(iterand), iterand) +\
+                        self.lambda_ * self.lift_variable
+                gamma /= np.linalg.norm(self.forwardOp @ iterand, 2) ** 2
+            else:
+                gamma = 2 / (self.iter + 3)
+        if not 0 < gamma < 1:
+            #  print('Warning, gamma value not valid: {}'.format(gamma))
+            gamma = np.clip(gamma, 0., 1.)
+        iterand *= (1 - gamma)
+        self.lift_variable *= (1 - gamma)
+        # print("iteration: {} - gamma value: {}".format(self.iter, gamma))
+        if np.abs(self.dual_certificate_value) > 1.:
+            iterand[self.new_ind] += gamma * np.sign(self.dual_certificate_value) * self.bound
+            self.lift_variable += gamma * self.bound
+        return {'iterand': iterand, 'positions': new_positions}
+
+'''    def combine_new_impulse(self) -> Any:
+        iterand = deepcopy(self.old_iterand['iterand'])
+        if self.new_ind is not None:
+            new_positions = np.hstack([self.old_iterand['positions'], self.new_ind])
+            if self.step_size == 'optimal':  # todo to verify again in the complex value case
+                coordinate = np.zeros(self.dim)
+                coordinate[self.new_ind] = 1.
+                gamma = np.dot(self.data_fidelity.gradient(iterand), iterand) + self.lambda_ * (
+                        1. * np.linalg.norm(iterand, 1) + (np.abs(self.dual_certificate_value) - 1.) * self.bound)
+                gamma /= np.linalg.norm(self.forwardOp @ coordinate * self.bound * np.sign(
+                    self.dual_certificate_value) - self.forwardOp @ iterand, 2) ** 2
+            else:
+                gamma = 2 / (self.iter + 3)
         else:
             new_positions = self.old_iterand['positions']
             if self.step_size == 'optimal':
-                gamma = np.dot(self.data_fidelity.gradient(iterand), iterand) + self.lambda_ * np.linalg.norm(iterand, 1)
+                gamma = np.dot(self.data_fidelity.gradient(iterand), iterand) + self.lambda_ * np.linalg.norm(iterand,
+                                                                                                              1)
                 gamma /= np.linalg.norm(self.forwardOp @ iterand, 2) ** 2
             else:
-                gamma = 2/(self.iter + 3)
+                gamma = 2 / (self.iter + 3)
         if not 0 < gamma < 1:
+            print('Warning, gamma value not valid: {}'.format(gamma))
             gamma = np.clip(gamma, 0., 1.)
         iterand *= (1 - gamma)
+        print("iteration: {} - gamma value: {}".format(self.iter, gamma))
         if self.new_ind is not None:
             iterand[self.new_ind] += gamma * np.sign(self.dual_certificate_value) * self.bound
-        return {'iterand': iterand, 'positions': new_positions}
+        return {'iterand': iterand, 'positions': new_positions}'''
 
 
 class FullyCorrectiveFWSolverForLasso(VanillaFWSolverForLasso):
@@ -238,7 +298,6 @@ class FullyCorrectiveFWSolverForLasso(VanillaFWSolverForLasso):
                                                               remember_iterand=remember_iterand, t_max=t_max)
         self.reweighting = reweighting
         self.last_weight = self.bound
-
 
     def combine_new_impulse(self) -> Any:
         iterand = deepcopy(self.old_iterand['iterand'])
@@ -265,7 +324,7 @@ class FullyCorrectiveFWSolverForLasso(VanillaFWSolverForLasso):
             tmp = np.zeros(self.dim)
             tmp[active_indices] = 1.
             column = self.forwardOp(tmp)
-            iterand[active_indices] = np.dot(self.data, column) / (np.linalg.norm(column, 2) ** 2)
+            iterand[active_indices] = np.dot(self.data.conjugate(), column).real / (np.linalg.norm(column, 2) ** 2)
             self.last_weight = iterand[active_indices]
         overvalue = np.abs(iterand) > self.bound
         if overvalue.sum() > 0:
@@ -281,24 +340,29 @@ class PolyatomicFWSolverForLasso(GenericFWSolverForLasso):
                  lambda_factor: Optional[float] = 0.1, min_iter: int = 10, max_iter: int = 500,
                  stopping_strategy: str = 'certificate', accuracy_threshold: float = 1e-4, verbose: Optional[int] = 10,
                  remove_positions: bool = False, remember_iterand: bool = False, final_reweighting_prec: float = 1e-4,
-                 init_reweighting_prec: float = .2, decreasing: bool = False, multi_spikes_threshold: float = .7, t_max: float = None):
+                 init_reweighting_prec: float = .2, decreasing: bool = True, multi_spikes_threshold: float = .7,
+                 t_max: float = None, remember_candidates_count: bool = False, remember_iterations_reweighting: bool = False):
         self.remove_positions = remove_positions
 
         self.reweighting_prec = init_reweighting_prec
         self.init_reweighting_prec = init_reweighting_prec
         self.decreasing = decreasing
         self.final_reweighting_prec = final_reweighting_prec
+        self.remember_candidates_count = remember_candidates_count
+        if self.remember_candidates_count:
+            self.candidates_count = []
 
         super(PolyatomicFWSolverForLasso, self).__init__(data, forwardOp, lambda_=lambda_,
-                                                                lambda_factor=lambda_factor,
-                                                                min_iter=min_iter, max_iter=max_iter,
-                                                                stopping_strategy=stopping_strategy,
-                                                                accuracy_threshold=accuracy_threshold,
-                                                                verbose=verbose,
-                                                                remember_iterand=remember_iterand,
-                                                                multi_spikes=True,
-                                                                multi_spikes_threshold=multi_spikes_threshold,
-                                                                reweighting='ista', t_max=t_max)
+                                                         lambda_factor=lambda_factor,
+                                                         min_iter=min_iter, max_iter=max_iter,
+                                                         stopping_strategy=stopping_strategy,
+                                                         accuracy_threshold=accuracy_threshold,
+                                                         verbose=verbose,
+                                                         remember_iterand=remember_iterand,
+                                                         multi_spikes=True,
+                                                         multi_spikes_threshold=multi_spikes_threshold,
+                                                         reweighting='ista', t_max=t_max,
+                                                         remember_iterations_reweighting = remember_iterations_reweighting)
 
     def combine_new_impulse(self):
         iterand = deepcopy(self.old_iterand['iterand'])
@@ -306,6 +370,7 @@ class PolyatomicFWSolverForLasso(GenericFWSolverForLasso):
         if self.new_ind is not None:
             new_positions = np.unique(np.hstack([self.old_iterand['positions'], self.new_ind]))
             if self.iter > 0 and self.remove_positions:
+                # todo do not use nonzero but also take into account when the value is neglictable (like 1e-x)
                 active_indices = np.unique(np.hstack([iterand.nonzero()[0], self.new_ind]))
             else:
                 active_indices = new_positions
@@ -315,6 +380,11 @@ class PolyatomicFWSolverForLasso(GenericFWSolverForLasso):
                 active_indices = np.unique(iterand.nonzero()[0])
             else:
                 active_indices = new_positions
+        if self.remember_candidates_count:
+            if self.new_ind is not None:
+                self.candidates_count.append(self.new_ind.size)
+            else:
+                self.candidates_count.append(0)
 
         if active_indices.shape[0] > 1:
             x0 = iterand[active_indices]
@@ -324,13 +394,12 @@ class PolyatomicFWSolverForLasso(GenericFWSolverForLasso):
             tmp[active_indices] = 1.
             column = self.forwardOp(tmp)
             iterand[active_indices] = np.dot(self.data, column) / (np.linalg.norm(column, 2) ** 2)
-        overvalue = np.abs(iterand) > self.bound
-        if overvalue.sum() > 0:    #Sanity check, never been triggered in practice
-            print("Overvalue at coordinates {}".format(np.arange(overvalue.shape[0])[overvalue]))
-            iterand[overvalue] = np.sign(iterand[overvalue]) * self.bound
+        # overvalue = np.abs(iterand) > self.bound
+        # if overvalue.sum() > 0:  # Sanity check, never been triggered in practice
+        #     print("Overvalue at coordinates {}".format(np.arange(overvalue.shape[0])[overvalue]))
+        #     iterand[overvalue] = np.sign(iterand[overvalue]) * self.bound
 
         if self.decreasing:
-            self.reweighting_prec = self.init_reweighting_prec / (self.iter + 1)
-            self.reweighting_prec = max(self.reweighting_prec, self.final_reweighting_prec)
+            self.reweighting_prec = max(self.init_reweighting_prec / (self.iter + 1), self.final_reweighting_prec)
 
         return {'iterand': iterand, 'positions': new_positions}
