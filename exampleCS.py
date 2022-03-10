@@ -8,17 +8,17 @@ import pycsou.linop as pl
 
 from pycsou.func.loss import SquaredL2Loss
 from pycsou.func.penalty import L1Norm
-from utils import TAPGD
+from utils import TAPGD, ExplicitMeasurementOperator
 
 from frank_wolfe import VanillaFWSolverForLasso, FullyCorrectiveFWSolverForLasso, \
     PolyatomicFWSolverForLasso
 
 ########################
 
-n_sources = 128
-alpha = 256
+n_sources = 256
+alpha = 16
 L = alpha * n_sources
-grid_size = 128
+grid_size = 512
 r = .8  # sampling area (rate of the side length)
 psnr = 20
 t_max = 10.
@@ -32,10 +32,11 @@ multi_spike_threshold = .7
 eps = 1e-32
 final_reweighting_prec = 1e-4
 stopping = 'relative_improvement'  # 'certificate' can be used
-lambda_factor = .1
+lambda_factor = .2
 remove = False
 
 ########################
+start = time.time()
 if seed is None:
     seed = np.random.randint(0, 10000)  # 7301, 885
 print('Seed: {}'.format(seed))
@@ -50,7 +51,7 @@ sources[indices] = weights
 
 ## Measurements
 
-forward = pl.DenseLinearOperator(rng.normal(size=(L, grid_size ** 2)))
+forward = ExplicitMeasurementOperator(rng.normal(size=(L, grid_size ** 2)), grid_size)
 forward.compute_lipschitz_cst(tol=1e-3)
 visibilities = forward(sources)
 std = np.max(np.abs(visibilities)) * np.exp(-psnr / 10)
@@ -62,6 +63,8 @@ measurements = visibilities + noise
 dirty_image = forward.adjoint(measurements)
 lambda_ = lambda_factor * np.abs(dirty_image).max()
 
+generation_time = time.time() - start
+
 ## APGD
 
 l22_loss = (1 / 2) * SquaredL2Loss(dim=forward.shape[0], data=measurements)
@@ -69,6 +72,7 @@ data_fidelity = l22_loss * forward
 regularization = lambda_ * L1Norm(dim=forward.shape[1])
 apgd = TAPGD(dim=regularization.shape[1], F=data_fidelity, G=regularization, acceleration='CD', verbose=None,
             accuracy_threshold=eps, max_iter=5000, t_max=t_max)
+print('APGD')
 start = time.time()
 res = apgd.iterate()
 fista_time = time.time() - start
@@ -151,6 +155,8 @@ print("Error with the sources:")
 for i in range(len(algos)):
     print('\t' + algos[i] + ': {}'.format(np.linalg.norm(solutions[i] - sources)/np.linalg.norm(sources)))
 print("\tAPGD: {}".format(np.linalg.norm(fista_solution - sources) / np.linalg.norm(sources)))
+
+print('Generation time: {}'.format(generation_time))
 
 sampled_times = np.linspace(0, vfw_solver.t_max, 3000)
 labels = ['Vanilla FW', 'FC-FW', 'P-FW']

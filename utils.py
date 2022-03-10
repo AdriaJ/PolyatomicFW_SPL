@@ -1,13 +1,7 @@
-# #############################################################################
-# solver.py
-# =========
-# Author : Matthieu Simeoni [matthieu.simeoni@gmail.com]
-# #############################################################################
-
 r"""
 This module provides the base class for iterative algorithms.
 """
-
+import pycsou.core.linop
 from pycsou.core.map import Map
 from typing import Optional, Tuple, Any
 from abc import abstractmethod
@@ -19,6 +13,7 @@ from pandas import DataFrame
 from pycsou.core.solver import GenericIterativeAlgorithm
 from pycsou.core.functional import ProximableFunctional
 from pycsou.core.map import DifferentiableMap
+from pycsou.linop import DenseLinearOperator
 
 class TimedGenericIterativeAlgorithm(GenericIterativeAlgorithm):
     r"""
@@ -68,15 +63,15 @@ class TimedGenericIterativeAlgorithm(GenericIterativeAlgorithm):
         while ((self.iter <= self.max_iter) and (self.stopping_metric() > self.accuracy_threshold) and self.elapsed_time < self.t_max) or (
                 self.iter <= self.min_iter):
             self.iterand = self.update_iterand()
+            self.elapsed_time = t.time() - self.start_time
             self.update_diagnostics()
             if self.verbose is not None:
                 if self.iter % self.verbose == 0:
                     self.print_diagnostics()
             self.old_iterand = deepcopy(self.iterand)
             self.iter += 1
-            self.elapsed_time = t.time() - self.start_time
             self.times.append(self.elapsed_time)
-        self.converged = True
+        self.converged = self.stopping_metric() < self.accuracy_threshold
         self.iterand = self.postprocess_iterand()
         return self.iterand, self.converged, self.diagnostics
 
@@ -364,7 +359,18 @@ class TimedAcceleratedProximalGradientDescent(TimedGenericIterativeAlgorithm):
                 self.old_iterand['iterand'] - self.iterand['iterand']) / np.linalg.norm(
                 self.old_iterand['iterand'])
 
-
-
-
 TAPGD = TimedAcceleratedProximalGradientDescent
+
+class ExplicitMeasurementOperator(DenseLinearOperator):
+    def __init__(self, array: np.ndarray, side_length: int):
+        super(ExplicitMeasurementOperator, self).__init__(array)
+        self.side_length = side_length
+
+    def adjoint(self, y):
+        return super(ExplicitMeasurementOperator, self).adjoint(y).real
+
+    def get_restricted_operator(self, column_indices) -> DenseLinearOperator:
+        op = DenseLinearOperator(self.mat[:, column_indices])
+        op.lipschitz_cst = self.lipschitz_cst
+        op.diff_lipschitz_cst = self.diff_lipschitz_cst
+        return op
