@@ -1,27 +1,25 @@
+import os.path
+import pickle
 import time
 
-import numpy as np
 import matplotlib.pyplot as plt
-
+import numpy as np
 from pycsou.func.loss import SquaredL2Loss
 from pycsou.func.penalty import L1Norm
 
-from utils import TAPGD, ExplicitMeasurementOperator
-
+from frank_wolfe import PolyatomicFWSolverForLasso, VanillaFWSolverForLasso
 from toolsRA import SubSampledDFT
-from frank_wolfe import PolyatomicFWSolverForLasso
-
-import pickle, os.path
+from utils import TAPGD, ExplicitMeasurementOperator
 
 ########################
 
-n_sources = 200
+n_sources = 300
 L = 8 * n_sources
-grid_size = 255
+grid_size = 201
 r = .8  # sampling area (rate of the side length)
-psnr = 50
+psnr = 20
 
-seed = None  # 8970, 2168 [3614] works!!!
+seed = grid_size  # 8970, 2168 [3614] works!!!
 
 decreasing = True
 # init_reweighting_prec = 1e-1
@@ -30,11 +28,11 @@ decreasing = True
 precisions_init = [1e-2, 5e-3, 1e-3]
 thresholds = [.6, .65, .7]
 
-t_max = 4.
+t_max = 6.
 eps = 1e-32
 final_reweighting_prec = 5e-5
 stopping = 'relative_improvement'  # 'certificate'
-lambda_factor = .15
+lambda_factor = .2
 remove = True
 remember = False
 
@@ -64,14 +62,14 @@ measurements = noiseless_visi + noise
 
 # Compute the explicit DFT matrix
 
-if os.path.isfile('dft'+str(grid_size)+'.p'):
-    dft_mat = pickle.load(open('dft'+str(grid_size)+'.p', 'rb'))
+if os.path.isfile('dft'+str(grid_size)+'_'+str(n_sources)+'.p'):
+    dft_mat = pickle.load(open('dft'+str(grid_size)+'_'+str(n_sources)+'.p', 'rb'))
 else:
     start = time.time()
     dft_mat = forward(np.eye(forward.shape[1]))
     matrix_time = time.time() - start
     print(f'Computation time of the DFT matrix: {matrix_time}')
-    pickle.dump(dft_mat, open('dft'+str(grid_size)+'.p', 'wb'))
+    pickle.dump(dft_mat, open('dft'+str(grid_size)+'_'+str(n_sources)+'.p', 'wb'))
 forward = ExplicitMeasurementOperator(dft_mat, side_length=grid_size)
 forward.diff_lipschitz_cst = 1.
 forward.lipschitz_cst = 1.
@@ -92,6 +90,24 @@ print("APGD")
 res = apgd.iterate()
 fista_time = apgd.elapsed_time
 fista_solution = res[0]['iterand']
+
+# Vanilla FW
+
+vfw_solver = VanillaFWSolverForLasso(data=measurements,
+                                     forwardOp=forward,
+                                     lambda_=lambda_,
+                                     min_iter=10,
+                                     max_iter=5000,
+                                     stopping_strategy=stopping,
+                                     accuracy_threshold=eps,
+                                     verbose=None,
+                                     remember_iterand=False,
+                                     step_size='optimal',
+                                     t_max=t_max)
+
+print('Vanilla Frank-Wolfe')
+vfw_res = vfw_solver.iterate()
+vfw_solution = vfw_res[0]['iterand']
 
 ## FW Solver
 
@@ -163,10 +179,14 @@ sampled_times = np.linspace(0, t_max, 3000)
 fig = plt.figure(figsize=(len(thresholds) * 4, len(precisions_init) * 4))
 obj_apgd = np.hstack([.5 * np.linalg.norm(measurements) ** 2, apgd.diagnostics['Objective Function'].values])
 interpolated_apgd = np.interp(sampled_times, np.asarray(apgd.times), obj_apgd)
+obj_vfw = np.hstack([.5 * np.linalg.norm(measurements) ** 2,
+                    (vfw_solver.diagnostics['Objective Function'].values).astype('float64')])
+interpolated_vfw = np.interp(sampled_times, np.asarray(vfw_solver.times), obj_vfw)
 for i in range(len(solvers)):
     ax = fig.add_subplot(len(precisions_init), len(thresholds), i + 1)
     ax.set_yscale('log')
     ax.plot(sampled_times, interpolated_apgd, label='APGD')
+    ax.plot(sampled_times, interpolated_vfw, label='V-FW')
     obj_fw = np.hstack([.5 * np.linalg.norm(measurements) ** 2,
                         (solvers[i].diagnostics['Objective Function'].values).astype('float64')])
     interpolated_fw = np.interp(sampled_times, solvers[i].times, obj_fw)
